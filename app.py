@@ -26,15 +26,20 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CHROMA_DIR = BASE_DIR / "chroma-db"
 UPLOAD_DIR = BASE_DIR / "uploads"
+TEXTS_DIR = BASE_DIR / "texts"
 INDEX_FILE = BASE_DIR / "indexed_files.json"
 
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
+SUMMARY_CHUNK_SIZE = 6000
+SUMMARY_CHUNK_OVERLAP = 300
+MAX_SUMMARY_CHUNKS = 100
 K_RETRIEVE = 4
 
 app = FastAPI(title="PDF RAG Assistant")
 
 UPLOAD_DIR.mkdir(exist_ok=True)
+TEXTS_DIR.mkdir(exist_ok=True)
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -117,6 +122,49 @@ class ChatRequest(BaseModel):
     question: str
 
 
+SUMMARY_KEYWORDS = (
+    "summarize",
+    "summarise",
+    "summary",
+    "summarize this",
+    "overall summary",
+    "key takeaways",
+    "overview of the document",
+    "overview of the pdf",
+    "what is this document about",
+    "what is this pdf about",
+    "main points",
+    "tl;dr",
+    "tldr",
+)
+
+
+def is_summary_request(question: str) -> bool:
+    q = question.lower()
+    return any(kw in q for kw in SUMMARY_KEYWORDS)
+
+
+SUMMARY_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You are an expert summarizer. Write a detailed, well-structured summary of the document section below. Capture the key concepts, definitions, and main ideas. Use clear headings and bullet points where useful.",
+        ),
+        ("human", "Document section:\n{text}"),
+    ]
+)
+
+MERGE_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You are an expert summarizer. Combine the section summaries below into ONE coherent overall summary of the entire document. Do not leave out important topics. Structure it with an introduction, organized sections, and a conclusion.",
+        ),
+        ("human", "Section summaries:\n{summaries}"),
+    ]
+)
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
@@ -155,6 +203,59 @@ def upload_status(job_id: str):
     return job
 
 
+def summarize_document(job_id: str, file_hash: str, safe_name: str) -> None:
+    try:
+        text_path = TEXTS_DIR / f"{file_hash}.txt"
+        if not text_path.exists():
+            jobs[job_id] = {"status": "error", "message": "Document text not found. Re-upload the PDF."}
+            return
+
+        full_text = text_path.read_text(encoding="utf-8").strip()
+        if not full_text:
+            jobs[job_id] = {"status": "error", "message": "Document text is empty."}
+            return
+
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=SUMMARY_CHUNK_SIZE,
+            chunk_overlap=SUMMARY_CHUNK_OVERLAP,
+        )
+        sections = splitter.split_text(full_text)[:MAX_SUMMARY_CHUNKS]
+
+        jobs[job_id] = {
+            "status": "processing",
+            "message": f"Summarizing {len(sections)} sections...",
+            "filename": safe_name,
+        }
+
+        section_summaries = []
+        for i, section in enumerate(sections, 1):
+            jobs[job_id] = {
+                "status": "processing",
+                "message": f"Summarizing section {i} of {len(sections)}...",
+                "filename": safe_name,
+            }
+            resp = llm.invoke(SUMMARY_PROMPT.invoke({"text": section}))
+            section_summaries.append(resp.content)
+
+        jobs[job_id] = {
+            "status": "processing",
+            "message": "Combining section summaries...",
+            "filename": safe_name,
+        }
+        merged = llm.invoke(
+            MERGE_PROMPT.invoke({"summaries": "\n\n".join(section_summaries)})
+        )
+
+        jobs[job_id] = {
+            "status": "done",
+            "answer": merged.content,
+            "message": "Summary complete.",
+            "filename": safe_name,
+        }
+    except Exception as exc:
+        jobs[job_id] = {"status": "error", "message": f"Could not summarize: {exc}"}
+
+
 def process_pdf(job_id: str, temp_path: Path, safe_name: str) -> None:
     try:
         file_hash = file_sha256(temp_path)
@@ -186,6 +287,9 @@ def process_pdf(job_id: str, temp_path: Path, safe_name: str) -> None:
                     "message": "The PDF appears to be empty.",
                 }
                 return
+
+            full_text = "\n\n".join(doc.page_content for doc in docs)
+            (TEXTS_DIR / f"{file_hash}.txt").write_text(full_text, encoding="utf-8")
 
             jobs[job_id] = {
                 "status": "processing",
@@ -224,10 +328,27 @@ def process_pdf(job_id: str, temp_path: Path, safe_name: str) -> None:
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest):
+def chat(req: ChatRequest, background_tasks: BackgroundTasks = BackgroundTasks()):
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    if is_summary_request(question):
+        with index_lock:
+            index = load_index()
+        if not index:
+            raise HTTPException(status_code=400, detail="Upload a PDF first.")
+
+        file_hash = next(iter(index))
+        safe_name = index[file_hash]
+        job_id = uuid.uuid4().hex
+        jobs[job_id] = {
+            "status": "processing",
+            "message": "Starting full-document summary...",
+            "filename": safe_name,
+        }
+        background_tasks.add_task(summarize_document, job_id, file_hash, safe_name)
+        return {"status": "processing", "job_id": job_id}
 
     docs = retriever.invoke(question)
 
@@ -249,3 +370,11 @@ def chat(req: ChatRequest):
             for doc in docs
         ],
     }
+
+
+@app.get("/api/chat/{job_id}")
+def chat_status(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job

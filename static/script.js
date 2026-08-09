@@ -156,6 +156,25 @@
         }
     }
 
+    async function pollSummary(jobId, question) {
+        let delay = 2000;
+        addMessage(
+            "assistant",
+            `Summarizing the full document... this can take a minute for large PDFs.`
+        );
+        while (true) {
+            await new Promise((r) => setTimeout(r, delay));
+            const res = await fetch(`/api/chat/${jobId}`);
+            if (!res.ok) throw new Error("Summary status check failed");
+            const data = await res.json();
+
+            if (data.status === "processing") continue;
+            if (data.status === "error") throw new Error(data.message || "Summary failed");
+            if (data.status === "done") return data.answer || "No summary returned.";
+            throw new Error("Unknown summary status");
+        }
+    }
+
     els.uploadCard.addEventListener("click", () => els.fileInput.click());
     els.fileInput.addEventListener("change", () => {
         uploadFiles(els.fileInput.files);
@@ -365,8 +384,14 @@
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data.detail || "Something went wrong");
 
-            removeTypingIndicator();
-            addMessage("assistant", data.answer || "No answer returned.", data.sources || []);
+            if (data.status === "processing") {
+                const answer = await pollSummary(data.job_id, question);
+                removeTypingIndicator();
+                addMessage("assistant", answer);
+            } else {
+                removeTypingIndicator();
+                addMessage("assistant", data.answer || "No answer returned.", data.sources || []);
+            }
         } catch (err) {
             removeTypingIndicator();
             addMessage("assistant", `Error: ${err.message}`);
