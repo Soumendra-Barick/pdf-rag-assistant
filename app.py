@@ -3,12 +3,13 @@ import json
 import shutil
 import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
@@ -88,6 +89,7 @@ prompt = ChatPromptTemplate.from_messages(
 )
 
 index_lock = threading.Lock()
+jobs: dict = {}
 
 
 def load_index() -> dict:
@@ -121,7 +123,7 @@ def index():
 
 
 @app.post("/api/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
@@ -134,6 +136,26 @@ async def upload_pdf(file: UploadFile = File(...)):
         temp_path = Path(tmp.name)
         shutil.copyfileobj(file.file, tmp)
 
+    job_id = uuid.uuid4().hex
+    jobs[job_id] = {
+        "status": "processing",
+        "message": "Indexing PDF...",
+        "filename": safe_name,
+    }
+    background_tasks.add_task(process_pdf, job_id, temp_path, safe_name)
+
+    return {"job_id": job_id, "status": "processing"}
+
+
+@app.get("/api/upload/{job_id}")
+def upload_status(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job
+
+
+def process_pdf(job_id: str, temp_path: Path, safe_name: str) -> None:
     try:
         file_hash = file_sha256(temp_path)
 
@@ -141,18 +163,35 @@ async def upload_pdf(file: UploadFile = File(...)):
             index = load_index()
             if file_hash in index:
                 temp_path.unlink(missing_ok=True)
-                return {
+                jobs[job_id] = {
+                    "status": "duplicate",
                     "message": f"'{safe_name}' is already uploaded.",
-                    "duplicate": True,
                     "original": index[file_hash],
                 }
+                return
+
+            jobs[job_id] = {
+                "status": "processing",
+                "message": "Reading pages...",
+                "filename": safe_name,
+            }
 
             loader = PyPDFLoader(str(temp_path))
             docs = loader.load()
 
             if not docs:
                 temp_path.unlink(missing_ok=True)
-                raise HTTPException(status_code=400, detail="The PDF appears to be empty.")
+                jobs[job_id] = {
+                    "status": "error",
+                    "message": "The PDF appears to be empty.",
+                }
+                return
+
+            jobs[job_id] = {
+                "status": "processing",
+                "message": "Splitting into chunks...",
+                "filename": safe_name,
+            }
 
             splitter = RecursiveCharacterTextSplitter(
                 chunk_size=CHUNK_SIZE,
@@ -160,24 +199,28 @@ async def upload_pdf(file: UploadFile = File(...)):
             )
             chunks = splitter.split_documents(docs)
 
+            jobs[job_id] = {
+                "status": "processing",
+                "message": f"Embedding {len(chunks)} chunks (this can take a minute for large PDFs)...",
+                "filename": safe_name,
+            }
+
             vectorstore.add_documents(documents=chunks)
             index[file_hash] = safe_name
             save_index(index)
-    except HTTPException:
-        temp_path.unlink(missing_ok=True)
-        raise
+
+        jobs[job_id] = {
+            "status": "done",
+            "message": f"Uploaded '{safe_name}' successfully.",
+            "chunks": len(chunks),
+            "pages": len(docs),
+        }
     except Exception as exc:
         temp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"Could not read PDF: {exc}")
-
-    temp_path.unlink(missing_ok=True)
-
-    return {
-        "message": f"Uploaded '{safe_name}' successfully.",
-        "chunks": len(chunks),
-        "pages": len(docs),
-        "duplicate": False,
-    }
+        jobs[job_id] = {
+            "status": "error",
+            "message": f"Could not read PDF: {exc}",
+        }
 
 
 @app.post("/api/chat")

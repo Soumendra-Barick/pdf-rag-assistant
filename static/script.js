@@ -98,7 +98,7 @@
                 .then(async (res) => {
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) throw new Error(data.detail || "Upload failed");
-                    return { file, data };
+                    return pollUpload(file, data.job_id);
                 });
         });
 
@@ -109,7 +109,7 @@
                 const file = pdfs[i];
                 if (result.status === "fulfilled") {
                     const data = result.value.data;
-                    if (data.duplicate) {
+                    if (data.status === "duplicate") {
                         updateDocumentItem(file.name, "done", "Already uploaded — skipped");
                         state.documents.push(file.name);
                         toast(`"${file.name}" is a duplicate, skipped.`);
@@ -134,6 +134,26 @@
             updateDocsEmpty();
             enableChat(state.documents.length > 0);
         });
+    }
+
+    async function pollUpload(file, jobId) {
+        let delay = 1000;
+        while (true) {
+            await new Promise((r) => setTimeout(r, delay));
+            const res = await fetch(`/api/upload/${jobId}`);
+            if (!res.ok) throw new Error("Upload status check failed");
+            const data = await res.json();
+
+            if (data.status === "processing") {
+                updateDocumentItem(file.name, "processing", data.message || "Processing...");
+                delay = Math.min(delay + 500, 3000);
+                continue;
+            }
+            if (data.status === "error") throw new Error(data.message || "Upload failed");
+            if (data.status === "duplicate") return { file, data };
+            if (data.status === "done") return { file, data };
+            throw new Error("Unknown upload status");
+        }
     }
 
     els.uploadCard.addEventListener("click", () => els.fileInput.click());
