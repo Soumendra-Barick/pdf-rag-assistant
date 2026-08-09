@@ -4,8 +4,8 @@
 # store into chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_mistralai import MistralAIEmbeddings
 
 data = PyPDFLoader("Document loaders/deeplearning.pdf")
 docs = data.load()
@@ -17,9 +17,7 @@ spliter = RecursiveCharacterTextSplitter(
 
 chunks = spliter.split_documents(docs)
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
+embeddings = MistralAIEmbeddings(model="mistral-embed")
 
 vectorstore = Chroma.from_documents(
     documents=chunks,

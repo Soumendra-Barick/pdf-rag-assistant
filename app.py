@@ -15,9 +15,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from pydantic import BaseModel
 
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_mistralai import ChatMistralAI
+from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -46,7 +45,7 @@ class NoCacheStaticFiles(StaticFiles):
 
 app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+embedding_model = MistralAIEmbeddings(model="mistral-embed")
 
 vectorstore = Chroma(
     persist_directory=str(CHROMA_DIR),
