@@ -129,6 +129,8 @@ SUMMARY_KEYWORDS = (
     "summarize this",
     "overall summary",
     "key takeaways",
+    "key points",
+    "keypoints",
     "overview of the document",
     "overview of the pdf",
     "what is this document about",
@@ -144,23 +146,37 @@ def is_summary_request(question: str) -> bool:
     return any(kw in q for kw in SUMMARY_KEYWORDS)
 
 
+# Per-section extraction: pull out only the key points, no fluff.
 SUMMARY_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are an expert summarizer. Write a detailed, well-structured summary of the document section below. Capture the key concepts, definitions, and main ideas. Use clear headings and bullet points where useful.",
+            "You are an expert summarizer. Read the document section below and extract "
+            "its KEY POINTS ONLY — no fluff, no restating context, no filler phrases. "
+            "Return 4-8 concise bullet points capturing the most important ideas, facts, "
+            "definitions, or arguments in this section. Each bullet should be a single "
+            "clear, information-dense sentence.",
         ),
         ("human", "Document section:\n{text}"),
     ]
 )
 
+# Merge step: combine all section bullet lists into one tight overall summary.
 MERGE_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            "You are an expert summarizer. Combine the section summaries below into ONE coherent overall summary of the entire document. Do not leave out important topics. Structure it with an introduction, organized sections, and a conclusion.",
+            "You are an expert summarizer. Below are bullet-point key takeaways extracted "
+            "from different sections of the same document. Merge them into ONE overall "
+            "summary of the entire document:\n"
+            "- Start with a 1-2 sentence overview of what the document is about.\n"
+            "- Follow with a single de-duplicated bullet list of the document's overall "
+            "key points (merge similar/overlapping points, drop redundancy, keep it tight — "
+            "aim for 6-12 bullets total, ordered roughly by importance).\n"
+            "- Do not add a lengthy conclusion or repeat the overview. Keep the whole thing "
+            "scannable and to the point.",
         ),
-        ("human", "Section summaries:\n{summaries}"),
+        ("human", "Section key points:\n{summaries}"),
     ]
 )
 
@@ -203,14 +219,51 @@ def upload_status(job_id: str):
     return job
 
 
+def rebuild_text_from_upload(file_hash: str) -> str | None:
+    """
+    Fallback for when texts/<hash>.txt is missing (e.g. disk was reset but
+    indexed_files.json / chroma-db persisted). Scans uploads/ for the
+    original PDF matching this hash and re-extracts its text.
+    Returns the extracted text, or None if no matching PDF could be found.
+    """
+    if not UPLOAD_DIR.exists():
+        return None
+
+    for candidate in UPLOAD_DIR.glob("*.pdf"):
+        try:
+            if file_sha256(candidate) != file_hash:
+                continue
+            loader = PyPDFLoader(str(candidate))
+            docs = loader.load()
+            if not docs:
+                return None
+            full_text = "\n\n".join(doc.page_content for doc in docs)
+            (TEXTS_DIR / f"{file_hash}.txt").write_text(full_text, encoding="utf-8")
+            return full_text
+        except Exception:
+            continue
+    return None
+
+
 def summarize_document(job_id: str, file_hash: str, safe_name: str) -> None:
     try:
         text_path = TEXTS_DIR / f"{file_hash}.txt"
-        if not text_path.exists():
-            jobs[job_id] = {"status": "error", "message": "Document text not found. Re-upload the PDF."}
-            return
-
-        full_text = text_path.read_text(encoding="utf-8").strip()
+        if text_path.exists():
+            full_text = text_path.read_text(encoding="utf-8").strip()
+        else:
+            jobs[job_id] = {
+                "status": "processing",
+                "message": "Text cache missing, re-extracting from original PDF...",
+                "filename": safe_name,
+            }
+            full_text = rebuild_text_from_upload(file_hash)
+            if full_text is None:
+                jobs[job_id] = {
+                    "status": "error",
+                    "message": "Document text not found and the original PDF is no longer available. Please re-upload the PDF.",
+                }
+                return
+            full_text = full_text.strip()
         if not full_text:
             jobs[job_id] = {"status": "error", "message": "Document text is empty."}
             return
@@ -236,6 +289,17 @@ def summarize_document(job_id: str, file_hash: str, safe_name: str) -> None:
             }
             resp = llm.invoke(SUMMARY_PROMPT.invoke({"text": section}))
             section_summaries.append(resp.content)
+
+        # If there's only one section, skip the merge step entirely —
+        # the section summary already IS the overall key-points summary.
+        if len(section_summaries) == 1:
+            jobs[job_id] = {
+                "status": "done",
+                "answer": section_summaries[0],
+                "message": "Summary complete.",
+                "filename": safe_name,
+            }
+            return
 
         jobs[job_id] = {
             "status": "processing",
@@ -339,8 +403,11 @@ def chat(req: ChatRequest, background_tasks: BackgroundTasks = BackgroundTasks()
         if not index:
             raise HTTPException(status_code=400, detail="Upload a PDF first.")
 
-        file_hash = next(iter(index))
-        safe_name = index[file_hash]
+        # index preserves insertion order -> last entry is the most recently
+        # uploaded PDF. Previously this always grabbed the FIRST uploaded PDF
+        # regardless of what the user uploaded most recently.
+        file_hash, safe_name = list(index.items())[-1]
+
         job_id = uuid.uuid4().hex
         jobs[job_id] = {
             "status": "processing",
