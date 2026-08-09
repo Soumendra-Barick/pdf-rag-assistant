@@ -25,7 +25,38 @@
         toast: document.getElementById("toast"),
         dropOverlay: document.getElementById("dropOverlay"),
         composer: document.getElementById("composer"),
+        menuToggle: document.getElementById("menuToggle"),
+        sidebarBackdrop: document.getElementById("sidebarBackdrop"),
     };
+
+    /* ---------- Mobile sidebar ---------- */
+
+    function isMobile() {
+        return window.matchMedia("(max-width: 860px)").matches;
+    }
+
+    function openSidebar() {
+        if (!isMobile()) return;
+        els.sidebar.classList.add("open");
+        els.sidebarBackdrop.classList.add("active");
+        document.body.style.overflow = "hidden";
+    }
+
+    function closeSidebar() {
+        els.sidebar.classList.remove("open");
+        els.sidebarBackdrop.classList.remove("active");
+        document.body.style.overflow = "";
+    }
+
+    els.menuToggle.addEventListener("click", () => {
+        els.sidebar.classList.contains("open") ? closeSidebar() : openSidebar();
+    });
+
+    els.sidebarBackdrop.addEventListener("click", closeSidebar);
+
+    window.addEventListener("resize", () => {
+        if (!isMobile()) closeSidebar();
+    });
 
     /* ---------- Theme ---------- */
 
