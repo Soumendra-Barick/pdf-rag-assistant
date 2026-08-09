@@ -7,5 +7,6 @@ langchain-mistralai==1.1.6
 langchain-text-splitters==1.1.2
 chromadb==1.5.9
 pypdf==6.15.0
+python-multipart==0.0.20
 python-dotenv==1.2.2
 pydantic==2.13.4
