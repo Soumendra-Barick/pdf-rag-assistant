@@ -139,6 +139,7 @@ html[data-theme="light"] .bg-glow {
 .app {
     display: flex;
     height: 100vh;
+    height: 100dvh;
     position: relative;
     z-index: 1;
 }
@@ -178,6 +179,7 @@ html[data-theme="light"] .sidebar {
     display: flex;
     align-items: center;
     padding: 18px 20px;
+    padding-top: max(18px, env(safe-area-inset-top));
     border-bottom: 1px solid var(--border);
 }
 
@@ -237,6 +239,7 @@ html[data-theme="light"] .sidebar {
 
 .sidebar-footer {
     padding: 14px 20px;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -527,7 +530,9 @@ html[data-theme="light"] .sidebar {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     padding: 16px 28px;
+    padding-top: max(16px, env(safe-area-inset-top));
     border-bottom: 1px solid var(--border);
     background: var(--header-blur);
     backdrop-filter: blur(18px);
@@ -554,12 +559,21 @@ html[data-theme="light"] .sidebar {
     display: flex;
     align-items: center;
     gap: 14px;
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-title {
+    min-width: 0;
 }
 
 .chat-title h1 {
     font-size: 18px;
     font-weight: 800;
     letter-spacing: -0.2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     background: var(--accent-grad);
     background-size: 200% 200%;
     -webkit-background-clip: text;
@@ -572,11 +586,15 @@ html[data-theme="light"] .sidebar {
     font-size: 12.5px;
     color: var(--text-dim);
     margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .chat-actions {
     display: flex;
     gap: 8px;
+    flex-shrink: 0;
 }
 
 .menu-btn {
@@ -853,6 +871,9 @@ html[data-theme="light"] #themeToggle .icon-moon {
     border-radius: 18px;
     font-size: 14px;
     line-height: 1.7;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    min-width: 0;
 }
 
 .message.user .bubble {
@@ -1040,6 +1061,7 @@ html[data-theme="light"] #themeToggle .icon-moon {
 /* Composer */
 .composer-wrap {
     padding: 14px 28px 18px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
     background: linear-gradient(transparent, var(--bg) 45%);
     position: relative;
     z-index: 2;
@@ -1170,7 +1192,7 @@ html[data-theme="light"] .composer {
 /* Toast */
 .toast {
     position: fixed;
-    bottom: 24px;
+    bottom: max(24px, env(safe-area-inset-bottom));
     left: 50%;
     transform: translateX(-50%) translateY(100px);
     background: rgba(13, 16, 36, 0.85);
@@ -1396,7 +1418,7 @@ html[data-theme="light"] .composer {
     }
 
     .chat-header {
-        padding: 12px 16px;
+        padding: max(12px, env(safe-area-inset-top)) 16px;
     }
 
     .chat-title h1 {
@@ -1413,7 +1435,7 @@ html[data-theme="light"] .composer {
     }
 
     .composer-wrap {
-        padding: 10px 12px 14px;
+        padding: 10px 12px max(14px, env(safe-area-inset-bottom));
     }
 
     .composer {
@@ -1473,7 +1495,7 @@ html[data-theme="light"] .composer {
 
 @media (max-width: 480px) {
     .chat-header {
-        padding: 10px 12px;
+        padding: max(10px, env(safe-area-inset-top)) 12px;
         gap: 8px;
     }
 
@@ -1490,7 +1512,7 @@ html[data-theme="light"] .composer {
     }
 
     .composer-wrap {
-        padding: 8px 8px 12px;
+        padding: 8px 8px max(12px, env(safe-area-inset-bottom));
     }
 
     .composer {
@@ -1534,6 +1556,125 @@ html[data-theme="light"] .composer {
 
     .empty-state p {
         max-width: 100%;
+    }
+}
+
+@media (max-width: 1200px) {
+    .sidebar {
+        width: 288px;
+        min-width: 288px;
+    }
+}
+
+@media (max-width: 640px) {
+    .empty-orb {
+        width: 60px;
+        height: 60px;
+        border-radius: 18px;
+        margin-bottom: 18px;
+    }
+
+    .empty-orb svg {
+        width: 30px;
+        height: 30px;
+    }
+
+    .empty-state h2 {
+        font-size: 19px;
+    }
+
+    .empty-state p {
+        font-size: 13px;
+    }
+
+    .suggestions {
+        gap: 8px;
+        margin-top: 20px;
+    }
+
+    .suggestion-chip {
+        padding: 11px 12px;
+        font-size: 12.5px;
+    }
+}
+
+@media (max-width: 480px) {
+    .chat-title p {
+        display: none;
+    }
+}
+
+@media (max-width: 400px) {
+    .chat-actions {
+        gap: 5px;
+    }
+
+    .clear-btn {
+        padding: 9px 10px;
+    }
+
+    .suggestion-chip {
+        padding: 10px 10px;
+        font-size: 12px;
+        gap: 8px;
+    }
+
+    .suggestion-chip svg {
+        width: 16px;
+        height: 16px;
+    }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+    .chat-header {
+        padding-top: 6px;
+        padding-bottom: 6px;
+    }
+
+    .empty-state {
+        overflow-y: auto;
+    }
+
+    .empty-orb {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        margin-bottom: 10px;
+    }
+
+    .empty-orb svg {
+        width: 24px;
+        height: 24px;
+    }
+
+    .empty-state h2 {
+        font-size: 16px;
+        margin-bottom: 4px;
+    }
+
+    .empty-state p {
+        font-size: 11.5px;
+        max-width: 480px;
+    }
+
+    .suggestions {
+        margin-top: 12px;
+        gap: 8px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        max-width: 720px;
+    }
+
+    .suggestion-chip {
+        flex-direction: column;
+        gap: 5px;
+        padding: 9px 8px;
+        text-align: center;
+        justify-content: flex-start;
+        font-size: 11px;
+    }
+
+    .composer-wrap {
+        padding-top: 6px;
     }
 }
 
